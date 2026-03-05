@@ -1,0 +1,28 @@
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Legacy data migration remnant
+customers.json
+customers.json.migrated
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# PyInstaller output
+build/
+dist/
+*.spec
+
+# Claude internal
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db

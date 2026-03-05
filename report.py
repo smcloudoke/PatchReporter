@@ -1,0 +1,69 @@
+from datetime import datetime
+from email.utils import getaddresses
+
+from constants import ALL_CATEGORIES
+
+
+def normalize_email_list(raw: str) -> str:
+    emails = [addr for _, addr in getaddresses([raw]) if addr]
+    return "; ".join(emails)
+
+
+def build_report_email(customer: dict, updates: dict) -> tuple[str, str]:
+    now        = datetime.now()
+    month_year = now.strftime("%B %Y")
+    company    = customer.get("company_name", "Customer")
+
+    subject = f"Patch Review Report - {company} - {month_year}"
+
+    sections = []
+    for category in ALL_CATEGORIES:
+        rows = updates.get(category, [])
+        if not rows:
+            continue
+        li = "".join(
+            f"<li><strong>{item.get('kb', '')}</strong>: {escape_html(item.get('title', ''))}</li>"
+            for item in rows
+        )
+        sections.append(f"<h3>{category}</h3><ul>{li}</ul>")
+
+    if not sections:
+        sections.append("<p><em>No KBs populated yet.</em></p>")
+
+    schedule = escape_html(customer.get("policy_schedule", "")).replace("\n", "<br>")
+
+    html_body = f"""
+<html>
+  <body style="font-family:Segoe UI,Arial,sans-serif;font-size:11pt;color:#222;">
+    <h1 style="color:#00264d;">Patch Review Report - {month_year}</h1>
+    <p>We have reviewed the {month_year} patches for potential vulnerabilities and the likelihood of issues. Below are our findings and approvals:</p>
+
+    <h2 style="color:#1e4e79;">Approved Updates</h2>
+    <p>Cumulative Updates are approved for all server and workstation versions.</p>
+
+    {''.join(sections)}
+
+    <h2 style="color:#004080;">Current Month Schedule ({company})</h2>
+    <p>{schedule or 'No schedule/policy entered.'}</p>
+
+    <h2 style="color:#004080;">End-of-Life Announcements</h2>
+    <p><strong>Windows Server EOL</strong><br>Support for Server 2012 and 2012 R2 has ended. Extended services must be purchased from Microsoft for continued updates.</p>
+    <p><strong>Windows 7 / 8 / 8.1</strong><br>Extended support for Windows 7 and Windows 8/8.1, including Server 2008 SP2/R2, has ceased.</p>
+    <p><strong>Windows 11 End of Servicing</strong><br>Multiple editions of Windows 11 have reached their end of servicing.</p>
+
+    <h2 style="color:#004080;">Additional Notes</h2>
+    <p>For organizations not receiving Windows OS Patching through Presidio, this information may still provide value.<br>If you encounter any issues, please contact our Support Team at:<br>800-494-0118</p>
+  </body>
+</html>
+""".strip()
+
+    return subject, html_body
+
+
+def escape_html(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+    )
