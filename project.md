@@ -1,10 +1,10 @@
-# Patch Report GUI Project Status
+# Patch Reporter — Project Status
 
 ## Overview
 This project started from a CLI script (`approvalreport.py`) that read KBs from a text file and generated a DOCX patch report.
-It has now been upgraded to a fully packaged GUI desktop application for Windows, distributed as a single `PatchReport.exe`.
+It has been upgraded into a fully packaged GUI desktop application for Windows, distributed as a single `PatchReporter.exe`.
 
-## Accomplishments So Far
+## Accomplishments
 
 ### 1. Replaced text-file workflow with a GUI app
 - Converted `approvalreport.py` into a Tkinter desktop application.
@@ -13,139 +13,135 @@ It has now been upgraded to a fully packaged GUI desktop application for Windows
   - Right panel: customer details + tabbed KB management
 
 ### 2. Added customer management
-- Added **File menu** with:
-  - `Add Customer`
-  - `Quit`
-- Built Add/Edit customer dialog with fields:
-  - Company Name
-  - Customer Email Addresses
-  - Patch Policies + Schedule Dates
+- Added **File menu** with `Add Customer` and `Quit`.
+- Built Add/Edit customer dialog with fields: Company Name, Email Addresses, Patch Policies + Schedule Dates.
 - Added right-click context menu on customer list for editing.
 - Added local persistence via `customers.json`.
 
 ### 3. Added customer detail view
-- Selecting a customer now displays:
-  - Company name
-  - Email addresses
-  - Patch policy/schedule notes
+- Selecting a customer displays company name, email addresses, and patch policy/schedule notes.
 - Per-customer KB data is loaded/saved automatically.
 
 ### 4. Added tabbed KB workflow
-- **Automated Pull** tab:
-  - `Pull Current Month KBs` button
-  - KB results table (Category, KB, Title)
-- **Manual KB Input** tab:
-  - Input fields for KB Name and KB Number
-  - `Add Manual KB`
-  - `Remove Selected`
-  - Shared KB list view and persistence
+- **Automated Pull** tab: `Pull Current Month KBs` button + KB results table (Category, KB, Title).
+- **Manual KB Input** tab: input fields for KB Name/Number, `Add Manual KB`, `Remove Selected`, shared KB list view.
 
 ### 5. Added Outlook draft export
-- Replaced DOCX output with Outlook message drafting.
+- Replaced DOCX output with Outlook message drafting via `win32com.client`.
 - Uses customer email addresses to populate `To`.
 - Builds HTML body using the existing report wording/style as baseline.
 - Added a customer-specific **Current Month Schedule** section.
 
-### 6. Added automated monthly KB discovery improvements
-- Initial implementation used catalog scraping only.
-- Pull logic was upgraded to use **MSRC CVRF API** for monthly KB discovery.
-- Catalog search is still used to enrich/resolve update titles and categories.
-- Implemented month behavior:
-  - Try current month first
-  - Fallback to previous month if current month returns no qualifying KBs
+### 6. Added automated monthly KB discovery
+- Uses **MSRC CVRF API** for monthly KB discovery.
+- Microsoft Update Catalog scraping to enrich/resolve update titles and categories.
+- Tries current month first; falls back to previous month if no qualifying KBs are found.
 
-### 7. Expanded pull coverage beyond cumulative updates
-- Added explicit query and matching logic to include:
-  - Cumulative Updates
-  - Servicing Stack Update (targeted to Server 2016 / version 1607 naming)
-  - .NET Framework updates (including security/quality rollups)
+### 7. Expanded pull coverage
+- Cumulative Updates
+- Servicing Stack Updates (SSU — standalone releases for Server 2016 only; baked into CU for 2019/2022+)
+- .NET Framework updates (including security/quality rollups)
 
 ### 8. Added KB deletion in automated tab
-- Added `Remove KB` button in Automated Pull tab.
-- Allows deleting unneeded pulled KB entries.
+- `Remove KB` button in Automated Pull tab.
 - Updates are persisted per customer.
 
-### 9. Fixed manual tab UI defect
-- Resolved scrollbar placement issue where scrollbar appeared in the middle of the KB area.
-- Refactored KB table/scrollbar into a dedicated frame so scrollbar stays at far right.
-
-### 10. Migrated UI from Tkinter to CustomTkinter
+### 9. Migrated UI from Tkinter to CustomTkinter
 - Replaced all `tkinter`/`ttk` widgets with `customtkinter` equivalents.
-- Applied dark mode appearance with blue accent theme globally.
-- **Sidebar redesign:**
-  - Fixed-width (248px) dark navy sidebar replaces the plain LabelFrame customer list.
-  - App branding ("Patch Report / Approval Builder") displayed at top of sidebar.
-  - Customer list is now a `CTkScrollableFrame` with one `CTkButton` per customer.
-  - Selected customer highlights with a blue tint; right-click context menu retained.
-  - `Add Customer` button anchored to the bottom of the sidebar.
-- **Main panel redesign:**
-  - Company name displayed in a card with 24pt bold font and an inline **Edit** button.
-  - Email addresses shown as a subtitle beneath the company name.
-  - Patch Policy / Schedule moved into its own card with a styled read-only textbox.
-  - Tabs upgraded to `CTkTabview`.
-  - Footer bar with status label on the left and **Draft Outlook Email** button on the right.
-- **KB tables:**
-  - `ttk.Treeview` retained (CustomTkinter has no Treeview equivalent).
-  - Styled with a custom `"Patch.Treeview"` ttk style: dark background, blue column headings, alternating row colors.
-- **Customer dialog:**
-  - Replaced `simpledialog.Dialog` with a custom `CTkToplevel` modal window.
-  - Fixed `grab failed: window not viewable` error by deferring `grab_set()` via `after(50, ...)`.
-- **Button hierarchy:**
-  - Primary actions (Pull KBs, Add Manual KB, Draft Outlook Email, Save) use the default blue CTk button.
-  - Secondary/destructive actions (Remove KB, Remove Selected, Cancel, Edit) use a muted gray style.
+- Dark mode with blue accent theme.
+- **Sidebar:** Fixed-width (248px) dark navy, `CTkScrollableFrame` customer list, one `CTkButton` per customer, `Add Customer` anchored at bottom.
+- **Main panel:** Company name card with inline Edit button, policy card, `CTkTabview` tabs, footer bar with status + Draft Outlook Email button.
+- **KB tables:** `ttk.Treeview` retained (CTk has no Treeview equivalent), styled with custom `"Patch.Treeview"` dark theme and alternating row colors.
+- **Customer dialog:** `CTkToplevel` modal; `grab_set()` deferred via `after(50, ...)` to avoid `grab failed: window not viewable` error.
 - File menu removed; replaced by sidebar Add button and inline Edit button.
 
-### 11. Packaged as a standalone Windows executable
-- Added `requirements.txt` covering all runtime dependencies and PyInstaller.
-- Added `build.bat` for one-click building on Windows:
-  - Installs all dependencies via pip.
-  - Runs PyInstaller with the correct flags.
-- PyInstaller flags used:
-  - `--onefile` — single self-contained `.exe`, no folder required.
-  - `--windowed` — no console window on launch.
-  - `--collect-data customtkinter` — bundles CustomTkinter theme/asset files.
-  - `--hidden-import` entries for `win32com.client`, `win32api`, `win32con`, `pywintypes`.
-- Output: `dist\PatchReport.exe` — verified working on Windows with Outlook integration confirmed.
+### 10. Packaged as a standalone Windows executable
+- Added `requirements.txt` and `build.bat` for one-click building on Windows.
+- PyInstaller flags: `--onefile`, `--windowed`, `--collect-data customtkinter`, `--hidden-import` for pywin32 modules.
+- Output: `dist\PatchReporter.exe`
+
+### 11. Separated into modules (separation of concerns)
+Split single-file app into focused modules:
+| File | Purpose |
+|---|---|
+| `approvalreport.py` | Entry point only — initialises DB, sets CTk theme, launches app |
+| `constants.py` | All constants, color palette, filter configuration |
+| `db.py` | All SQLite persistence (CRUD, schema, migration) |
+| `msrc.py` | KB fetching, parsing, classifying, product filtering |
+| `report.py` | Outlook email body building |
+| `ui.py` | All UI — `CustomerDialog` + `ApprovalReportApp` |
+
+### 12. Migrated data persistence from JSON to SQLite
+- Replaced `customers.json` flat file with `patchreport.db` (SQLite via stdlib `sqlite3`).
+- Schema: `customers` table + `kb_entries` table with `ON DELETE CASCADE`.
+- One-time automatic migration: existing `customers.json` is imported on first run and renamed to `customers.json.migrated`.
+- `PRAGMA foreign_keys = ON` enforced on every connection.
+
+### 13. Added per-customer patch filters
+- Filter card in the main panel (between policy card and tabs) with:
+  - 6 product family checkboxes: Windows 10, 11, Server 2016/2019/2022/2025
+  - Architecture dropdown: x64 (default), x86, ARM64
+- Filters are stored as JSON in a `filters` column on the `customers` table (additive migration — safe for existing DBs).
+- Applied in two places:
+  - **Pre-pull:** catalog queries are scoped to selected server products (SSU queries generated per selected server, .NET always included).
+  - **Post-pull:** Treeview display filters rows using `matches_product_filter()` so only matching titles are shown.
+- Auto-saves on every checkbox/dropdown change; re-filters the table immediately.
+- Empty product selection = no filter (shows all), preserving backward compatibility.
+
+### 14. Fixed product filter matching for catalog title variants
+- Microsoft Update Catalog uses non-obvious naming for some products:
+  - Server 2022 → "Microsoft server operating system version 21H2" (not "Windows Server 2022")
+  - Server 2025 → "Microsoft server operating system version 24H2" (not "Windows Server 2025")
+- Added specific aliases to `PRODUCT_KEYWORDS` in `msrc.py` to match these catalog title formats.
+- Removed ambiguous version aliases (`version 1607`, `version 1809`) that caused Windows 10 entries to leak through when only server products were selected.
+
+### 15. Renamed app to Patch Reporter
+- `APP_TITLE` updated in `constants.py`.
+- Sidebar branding updated in `ui.py`.
+- `build.bat` updated to produce `PatchReporter.exe`.
+
+### 16. Version control and GitHub
+- Initialized git repository with `main` branch.
+- `.gitignore` excludes: `*.db`, `venv/`, `__pycache__/`, `dist/`, `build/`, `.claude/`, `customers.json`.
+- Repository: https://github.com/smcloudoke/PatchReporter
 
 ## Current App Behavior
-- Customer records persist in `customers.json` (created alongside the `.exe` on first run).
+- Customer records persist in `patchreport.db` (SQLite, created alongside the `.exe` on first run).
+- Per-customer product/architecture filters scope both the pull and the table display.
 - KBs can come from automated pull (MSRC CVRF API + catalog) or manual entry.
-- User can remove entries from both automated and manual tabs.
+- Entries can be removed from both automated and manual tabs.
 - Report content is generated into an Outlook draft with full HTML formatting.
-- App ships as a single `PatchReport.exe` — no Python install required on the target machine.
+- App ships as a single `PatchReporter.exe` — no Python install required on the target machine.
 
 ## File Overview
 | File | Purpose |
 |---|---|
-| `approvalreport.py` | Main application — all UI and business logic |
-| `requirements.txt` | Python dependencies for pip |
-| `build.bat` | Windows build script (run on target machine to produce `.exe`) |
-| `customers.json` | Runtime data file — auto-created, not committed |
+| `approvalreport.py` | Entry point |
+| `constants.py` | Constants, color palette, filter config |
+| `db.py` | SQLite persistence |
+| `msrc.py` | KB fetching, parsing, classifying, filtering |
+| `report.py` | Outlook email builder |
+| `ui.py` | All UI classes |
+| `requirements.txt` | Python dependencies |
+| `build.bat` | Windows build script → `PatchReporter.exe` |
 | `project.md` | This file |
+| `CLAUDE.md` | Guidance for Claude Code |
 
 ## Technical Notes
 - Language/runtime: Python 3
-- UI: CustomTkinter (dark mode, blue theme) + ttk.Treeview (custom dark styling)
+- UI: CustomTkinter (dark mode, blue theme) + `ttk.Treeview` (custom dark styling) + `tk.Menu` (right-click context)
 - Networking/parsing: `requests`, `beautifulsoup4`
-- Outlook integration: `pywin32` (`win32com.client`)
-- External data source: MSRC CVRF API + Microsoft Update Catalog search pages
+- Outlook integration: `pywin32` (`win32com.client`) — Windows only
+- Data: SQLite via stdlib `sqlite3`
+- External data: MSRC CVRF API + Microsoft Update Catalog scraping
 - Distribution: PyInstaller `--onefile --windowed`
-
-## Dependencies (Windows)
-All dependencies are installed automatically by `build.bat`. To install manually:
-
-```bash
-pip install customtkinter requests beautifulsoup4 pywin32 pyinstaller
-```
 
 ## Known Limitations / Risks
 - Microsoft Update Catalog HTML structure can change and may require parser adjustments.
-- Category matching for SSU/.NET depends on catalog title patterns and may need tuning for edge naming cases.
-- Outlook draft requires installed Outlook desktop client and COM availability.
-- `--onefile` executables have a 2–5 second cold-start delay while assets are extracted to a temp folder; this is normal PyInstaller behavior.
-- `customers.json` is written to the working directory of the `.exe` — keep the executable in a stable location (e.g., `Documents\PatchReport\`) so data persists between runs.
+- Outlook draft requires installed Outlook desktop client and COM availability (Windows only).
+- `--onefile` executables have a 2–5 second cold-start delay while assets extract to a temp folder — normal PyInstaller behavior.
+- Keep `PatchReporter.exe` in a stable location (e.g., `Documents\PatchReporter\`) so the SQLite DB persists between runs.
 
 ## Suggested Next Steps
-1. Add a visible status label indicating whether current month or previous month data was used.
-2. Add logging panel / debug export for pull diagnostics.
-3. Add product filters (e.g., explicit Windows 10/11/Server scopes).
+1. Add a visible indicator showing whether current or previous month data was used for the pull.
+2. Add logging/debug export panel for pull diagnostics.
