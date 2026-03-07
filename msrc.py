@@ -299,6 +299,28 @@ def matches_requested_families(title: str, category: str) -> bool:
     return False
 
 
+def find_patch_for_server(os_version: str, updates: dict) -> tuple[str, str]:
+    """
+    Find the best-matching Cumulative Update for a server's OS version string.
+    Matches using PRODUCT_KEYWORDS so aliases like 'server operating system 21H2'
+    are handled correctly.
+    Returns (kb, title) or ("", "") if no match found.
+    """
+    os_lower = os_version.lower()
+    for product, keywords in PRODUCT_KEYWORDS.items():
+        if any(kw in os_lower for kw in keywords):
+            for entry in updates.get(CATEGORY_CUMULATIVE, []):
+                if any(kw in entry["title"].lower() for kw in keywords):
+                    return entry["kb"], entry["title"]
+    # Fallback: match significant words from the OS version string directly
+    os_words = [w for w in os_lower.split() if len(w) > 3]
+    for entry in updates.get(CATEGORY_CUMULATIVE, []):
+        title_lower = entry["title"].lower()
+        if os_words and all(w in title_lower for w in os_words):
+            return entry["kb"], entry["title"]
+    return "", ""
+
+
 def clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 

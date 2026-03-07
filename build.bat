@@ -31,6 +31,7 @@ pyinstaller ^
     --add-data "ui_customer.py;." ^
     --add-data "ui_patches.py;." ^
     --add-data "ui_servers.py;." ^
+    --add-data "reports_pdf.py;." ^
     approvalreport.py
 
 if errorlevel 1 (

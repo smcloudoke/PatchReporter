@@ -26,28 +26,35 @@ Output: `dist\PatchReport.exe`. The `build\` folder and `.spec` file can be disc
 
 ## Architecture
 
-The app is split across five files:
-
 | File | Responsibility |
 |---|---|
 | `approvalreport.py` | Entry point only — `main()`, DB init, CTk theme setup |
 | `constants.py` | All constants and UI color palette; no imports |
-| `db.py` | All SQLite operations — schema, CRUD, one-time JSON migration |
+| `db.py` | All SQLite operations — schema, CRUD, migrations |
 | `msrc.py` | KB fetching, parsing, classifying (MSRC API + catalog scraping) |
-| `report.py` | Email report building (`build_report_email`, `normalize_email_list`) |
-| `ui.py` | All UI — `CustomerDialog` and `ApprovalReportApp` |
+| `report.py` | Outlook email report building |
+| `reports_pdf.py` | Pre/post patch PDF report building (reportlab) |
+| `ui.py` | `ApprovalReportApp` — main window, sidebar, layout shell |
+| `ui_customer.py` | `CustomerDialog` — modal add/edit customer dialog |
+| `ui_patches.py` | `PatchPanel` — patch pull, KB treeview, product filters |
+| `ui_servers.py` | `ServerPanel` — server inventory, patch sessions, PDF generation |
 
-Dependency flow (no circular imports): `approvalreport` → `ui` / `db` → `msrc` / `report` → `constants`
+Dependency flow (no circular imports):
+`approvalreport` → `ui` → `ui_patches` / `ui_servers` / `ui_customer` → `db` / `msrc` / `report` / `reports_pdf` → `constants`
 
-**`ui.py`** — two classes:
-- `CustomerDialog(ctk.CTkToplevel)` — modal add/edit dialog. Uses `after(50, self.grab_set)` (not `grab_set()` directly) to avoid a CTkToplevel timing bug where the window isn't viewable yet.
-- `ApprovalReportApp` — owns all layout and wiring. Customer selection state is tracked via `current_customer_idx: int | None` (no Listbox/curselection). The customer sidebar is a `CTkScrollableFrame` populated with one `CTkButton` per customer; `refresh_customer_list()` destroys and recreates all buttons on any change.
+**`ui.py`** — `ApprovalReportApp` owns the top-level layout and wiring. Customer selection state is tracked via `current_customer_idx: int | None`. The sidebar is a `CTkScrollableFrame` with one `CTkButton` per customer; `refresh_customer_list()` destroys and recreates all buttons on any change. The main area uses a `CTkTabview` with "Patch Management" and "Server Status" tabs hosting `PatchPanel` and `ServerPanel` respectively.
+
+**`ui_customer.py`** — `CustomerDialog(ctk.CTkToplevel)` — modal add/edit dialog. Uses `after(50, self.grab_set)` to avoid a CTkToplevel timing bug. Patch policies are stored as a list of `{name, schedule}` dicts.
+
+**`ui_patches.py`** — `PatchPanel` — handles KB pull, treeview display, and per-customer product/arch filters. Filters are saved to the DB automatically on change and applied both to pull queries and treeview display.
+
+**`ui_servers.py`** — `ServerPanel` — CSV server import, monthly patch sessions, per-server KB auto-fill via `find_patch_for_server()`, bulk status apply, and pre/post PDF generation. `_PatchOverrideDialog` handles manual KB override for selected servers.
 
 **`msrc.py`** — pure functions, no UI dependencies:
-- `fetch_current_month_updates()` — orchestrates the full pull: calls MSRC CVRF API first, then enriches via catalog scraping. Tries current month, falls back to previous month automatically.
-- `fetch_msrc_month_kbs()` / `extract_kbs_from_cvrf_xml()` — parse the MSRC XML feed to get KB article IDs.
+- `fetch_current_month_updates(filters)` — product-targeted catalog queries. Tries current month, falls back to previous month automatically.
 - `search_update_catalog()` — scrapes Microsoft Update Catalog HTML; fragile to markup changes.
-- `classify_update()` / `matches_requested_families()` — categorize a KB title into Cumulative Update, Servicing Stack Update, or .NET Framework.
+- `classify_update()` / `matches_product_filter()` — categorize and filter KB titles.
+- `find_patch_for_server(os_version, updates)` — matches a server's OS string to the correct CU from pulled data.
 
 **`report.py`** — pure functions, no UI dependencies:
 - `build_report_email()` — builds the HTML email body.
@@ -55,7 +62,7 @@ Dependency flow (no circular imports): `approvalreport` → `ui` / `db` → `msr
 
 ## Database
 
-`patchreport.db` (SQLite) is created in the working directory on first run via `db.init_db()`. Schema: `customers` table (id, company_name, emails, policy_schedule, last_updated) + `kb_entries` table (customer_id FK with CASCADE, category, kb, title). Each customer dict in memory carries an `"id"` field that maps to the DB primary key. `current_customer_idx` in `ApprovalReportApp` is a list index, not the DB id — the DB id is accessed via `self.customers[idx]["id"]`. If `customers.json` exists on first run it is automatically imported and renamed to `customers.json.migrated`.
+`patchreport.db` (SQLite) created on first run via `db.init_db()`. Tables: `customers`, `kb_entries`, `servers`, `patch_sessions`, `server_patch_status`. Additive column migrations are wrapped in try/except so existing DBs upgrade silently. Each customer dict in memory carries an `"id"` field mapping to the DB primary key. `current_customer_idx` in `ApprovalReportApp` is a list index, not the DB id. If `customers.json` exists on first run it is automatically imported and renamed to `customers.json.migrated`.
 
 ## Key constraints
 

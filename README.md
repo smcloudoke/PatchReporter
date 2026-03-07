@@ -12,7 +12,9 @@ A Windows desktop app for tracking and approving monthly Microsoft patch release
 - **Per-customer product filters** — scope pulls and table display to specific OS families (Windows 10/11, Server 2016/2019/2022/2025) and architecture (x64/x86/ARM64)
 - **Manual KB entry** — add any KB manually if it isn't caught by the automated pull
 - **Outlook draft export** — generates a formatted HTML email draft addressed to the customer's contacts
-- **Customer management** — add, edit, and delete customers; all data persists locally in SQLite
+- **Server management** — import server inventory via CSV; track per-server patch status per month with policy assignment
+- **Pre/post patch PDF reports** — generate printable reports with KB details, server inventory, and patch outcomes
+- **Customer management** — add, edit, and delete customers with structured patch policies (name + schedule); all data persists locally in SQLite
 - **Dark mode UI** — built with CustomTkinter
 
 ---
@@ -54,10 +56,14 @@ Output: `dist\PatchReporter.exe`
 |---|---|
 | `approvalreport.py` | Entry point |
 | `constants.py` | App-wide constants and configuration |
-| `db.py` | SQLite persistence (customers, KB entries) |
+| `db.py` | SQLite persistence (customers, KB entries, servers, patch sessions) |
 | `msrc.py` | KB fetching, parsing, classifying, and filtering |
 | `report.py` | Outlook email body builder |
-| `ui.py` | All UI — main app and customer dialog |
+| `reports_pdf.py` | Pre/post patch PDF report builder |
+| `ui.py` | Main window shell and sidebar |
+| `ui_customer.py` | Add/edit customer dialog |
+| `ui_patches.py` | Patch management tab (pull, treeview, filters) |
+| `ui_servers.py` | Server status tab (inventory, sessions, PDF export) |
 | `requirements.txt` | Python dependencies |
 | `build.bat` | Windows build script |
 

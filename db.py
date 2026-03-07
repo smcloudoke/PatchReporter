@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+from datetime import datetime
 
 from constants import ALL_CATEGORIES, CUSTOMERS_FILE, DB_FILE, DEFAULT_FILTERS
 
@@ -36,11 +37,42 @@ def init_db():
                 title       TEXT    NOT NULL
             );
         """)
-        # Additive migration — safe for existing DBs that predate the filters column
-        try:
-            conn.execute("ALTER TABLE customers ADD COLUMN filters TEXT NOT NULL DEFAULT '{}'")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS servers (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+                hostname    TEXT    NOT NULL,
+                os_version  TEXT    NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS patch_sessions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+                month       TEXT    NOT NULL,
+                policy      TEXT    NOT NULL DEFAULT '',
+                created_at  TEXT    NOT NULL DEFAULT '',
+                UNIQUE(customer_id, month)
+            );
+
+            CREATE TABLE IF NOT EXISTS server_patch_status (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL REFERENCES patch_sessions(id) ON DELETE CASCADE,
+                server_id  INTEGER NOT NULL REFERENCES servers(id)        ON DELETE CASCADE,
+                status     TEXT    NOT NULL DEFAULT 'Pending',
+                UNIQUE(session_id, server_id)
+            );
+        """)
+        # Additive migrations — safe for existing DBs
+        for stmt in [
+            "ALTER TABLE customers ADD COLUMN filters TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE patch_sessions ADD COLUMN policy TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE server_patch_status ADD COLUMN patch_kb   TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE server_patch_status ADD COLUMN patch_name TEXT NOT NULL DEFAULT ''",
+        ]:
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
     _migrate_from_json()
 
 
@@ -77,10 +109,31 @@ def load_customers() -> list[dict]:
         result = []
         for row in rows:
             customer = dict(row)
-            customer["filters"] = _parse_filters(customer.get("filters", ""))
-            customer["updates"] = _load_kb_entries(row["id"], conn)
+            customer["filters"]  = _parse_filters(customer.get("filters", ""))
+            customer["policies"] = _parse_policies(customer.get("policy_schedule", ""))
+            customer["updates"]  = _load_kb_entries(row["id"], conn)
             result.append(customer)
         return result
+
+
+def _parse_policies(raw: str) -> list[dict]:
+    """
+    Deserialise the policy_schedule column into a list of {name, schedule} dicts.
+    Legacy plain-text values (one entry per line) are migrated automatically.
+    """
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return [
+                {"name": str(p.get("name", "")), "schedule": str(p.get("schedule", ""))}
+                for p in data if isinstance(p, dict) and p.get("name")
+            ]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # Legacy plain text — treat each non-empty line as a policy name
+    return [{"name": line.strip(), "schedule": ""} for line in raw.splitlines() if line.strip()]
 
 
 def _parse_filters(raw: str) -> dict:
@@ -119,7 +172,7 @@ def save_customer(customer: dict) -> int:
             (
                 customer.get("company_name", ""),
                 customer.get("emails", ""),
-                customer.get("policy_schedule", ""),
+                json.dumps(customer.get("policies", [])),
                 customer.get("last_updated", ""),
                 json.dumps(customer.get("filters", DEFAULT_FILTERS)),
             ),
@@ -140,7 +193,7 @@ def update_customer(customer: dict):
             (
                 customer.get("company_name", ""),
                 customer.get("emails", ""),
-                customer.get("policy_schedule", ""),
+                json.dumps(customer.get("policies", [])),
                 customer.get("last_updated", ""),
                 json.dumps(customer.get("filters", DEFAULT_FILTERS)),
                 cid,
@@ -154,6 +207,131 @@ def delete_customer(customer_id: int):
     """Delete a customer and all their KB entries (cascade)."""
     with _connect() as conn:
         conn.execute("DELETE FROM customers WHERE id=?", (customer_id,))
+
+
+# ─── Servers ──────────────────────────────────────────────────────────────────
+
+def get_servers(customer_id: int) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, hostname, os_version FROM servers "
+            "WHERE customer_id = ? ORDER BY os_version, hostname",
+            (customer_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def import_servers(customer_id: int, servers: list[dict]) -> int:
+    """Replace all servers for a customer. Returns count imported."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM servers WHERE customer_id = ?", (customer_id,))
+        conn.executemany(
+            "INSERT INTO servers (customer_id, hostname, os_version) VALUES (?, ?, ?)",
+            [(customer_id, s["hostname"], s["os_version"]) for s in servers],
+        )
+    return len(servers)
+
+
+def delete_servers(server_ids: list[int]):
+    with _connect() as conn:
+        conn.executemany("DELETE FROM servers WHERE id = ?", [(sid,) for sid in server_ids])
+
+
+# ─── Patch sessions ───────────────────────────────────────────────────────────
+
+def get_or_create_session(customer_id: int, month: str) -> int:
+    """
+    Return the session id for the given customer/month, creating it if needed.
+    Also ensures every current server has a status row (Pending if new).
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM patch_sessions WHERE customer_id = ? AND month = ?",
+            (customer_id, month),
+        ).fetchone()
+
+        if row:
+            session_id = row["id"]
+        else:
+            cur = conn.execute(
+                "INSERT INTO patch_sessions (customer_id, month, created_at) VALUES (?, ?, ?)",
+                (customer_id, month, datetime.now().isoformat()),
+            )
+            session_id = cur.lastrowid
+
+        # Ensure all current servers have a status entry (INSERT OR IGNORE handles existing)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO server_patch_status (session_id, server_id, status)
+            SELECT ?, id, 'Pending' FROM servers WHERE customer_id = ?
+            """,
+            (session_id, customer_id),
+        )
+    return session_id
+
+
+def get_session_data(session_id: int) -> dict[int, dict]:
+    """
+    Returns {server_id: {"status": ..., "patch_kb": ..., "patch_name": ...}}
+    for every server in the session.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT server_id, status, patch_kb, patch_name "
+            "FROM server_patch_status WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
+    return {
+        r["server_id"]: {
+            "status":     r["status"],
+            "patch_kb":   r["patch_kb"],
+            "patch_name": r["patch_name"],
+        }
+        for r in rows
+    }
+
+
+def set_server_patches(session_id: int, server_ids: list[int],
+                       patch_kb: str, patch_name: str):
+    """Set patch_kb and patch_name for one or more servers in a session."""
+    with _connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO server_patch_status (session_id, server_id, status, patch_kb, patch_name)
+            VALUES (?, ?, 'Pending', ?, ?)
+            ON CONFLICT(session_id, server_id)
+            DO UPDATE SET patch_kb = excluded.patch_kb, patch_name = excluded.patch_name
+            """,
+            [(session_id, sid, patch_kb, patch_name) for sid in server_ids],
+        )
+
+
+def get_session_policy(session_id: int) -> str:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT policy FROM patch_sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+    return row["policy"] if row else ""
+
+
+def set_session_policy(session_id: int, policy: str):
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE patch_sessions SET policy = ? WHERE id = ?", (policy, session_id)
+        )
+
+
+def set_server_statuses(session_id: int, server_ids: list[int], status: str):
+    """Upsert status for one or more servers in a session."""
+    with _connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO server_patch_status (session_id, server_id, status)
+            VALUES (?, ?, ?)
+            ON CONFLICT(session_id, server_id) DO UPDATE SET status = excluded.status
+            """,
+            [(session_id, sid, status) for sid in server_ids],
+        )
 
 
 # ─── Private helpers ──────────────────────────────────────────────────────────

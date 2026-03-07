@@ -69,7 +69,11 @@ Split single-file app into focused modules:
 | `db.py` | All SQLite persistence (CRUD, schema, migration) |
 | `msrc.py` | KB fetching, parsing, classifying, product filtering |
 | `report.py` | Outlook email body building |
-| `ui.py` | All UI — `CustomerDialog` + `ApprovalReportApp` |
+| `ui.py` | Main window shell — `ApprovalReportApp` |
+| `ui_customer.py` | `CustomerDialog` — modal add/edit dialog |
+| `ui_patches.py` | `PatchPanel` — KB pull, treeview, product filters |
+| `ui_servers.py` | `ServerPanel` — server inventory, patch sessions, PDF export |
+| `reports_pdf.py` | Pre/post patch PDF builder (reportlab) |
 
 ### 12. Migrated data persistence from JSON to SQLite
 - Replaced `customers.json` flat file with `patchreport.db` (SQLite via stdlib `sqlite3`).
@@ -105,11 +109,31 @@ Split single-file app into focused modules:
 - `.gitignore` excludes: `*.db`, `venv/`, `__pycache__/`, `dist/`, `build/`, `.claude/`, `customers.json`.
 - Repository: https://github.com/smcloudoke/PatchReporter
 
+### 17. Server management and patch session tracking
+- CSV import of server inventory (hostname, os_version) per customer.
+- Monthly patch sessions — each customer/month combination gets a session with per-server status tracking.
+- Statuses: Pending, Installed, Failed, Reboot Required (colour-coded in the treeview).
+- Patch KB auto-fill: on session load, each server is matched to the appropriate CU from pulled KB data via `find_patch_for_server()` (overridable per-server via Override Patch dialog).
+- Session policy dropdown — select from the customer's configured patch policies; persisted per session.
+- Month navigation (◀/▶) to view historical sessions.
+
+### 18. Pre/post patch PDF reports
+- Pre-patch: lists all KBs to be applied (by category, with wrapping titles) + server inventory. Includes selected policy.
+- Post-patch: summary counts + server status table (Hostname / OS Version / KB / Patch Name / Status) with status-based row colouring. Includes selected policy.
+- Built with reportlab; guarded import so app runs without it installed.
+
+### 19. Structured patch policies
+- Customer patch policies changed from a plain text field to a structured list of name + schedule pairs.
+- Stored as JSON in the existing `policy_schedule` column (auto-migrated from legacy plain text on load).
+- Displayed in the main panel as "Policy Name  —  Schedule" per line.
+- Policy names populate the session policy dropdown in the Server Status tab.
+
 ## Current App Behavior
 - Customer records persist in `patchreport.db` (SQLite, created alongside the `.exe` on first run).
 - Per-customer product/architecture filters scope both the pull and the table display.
 - KBs can come from automated pull (MSRC CVRF API + catalog) or manual entry.
-- Entries can be removed from both automated and manual tabs.
+- Server inventory imported via CSV; patch status tracked per server per month.
+- Pre/post patch PDF reports generated from the Server Status tab.
 - Report content is generated into an Outlook draft with full HTML formatting.
 - App ships as a single `PatchReporter.exe` — no Python install required on the target machine.
 
@@ -117,11 +141,15 @@ Split single-file app into focused modules:
 | File | Purpose |
 |---|---|
 | `approvalreport.py` | Entry point |
-| `constants.py` | Constants, color palette, filter config |
-| `db.py` | SQLite persistence |
+| `constants.py` | Constants, color palette, status config |
+| `db.py` | SQLite persistence (customers, KB entries, servers, sessions) |
 | `msrc.py` | KB fetching, parsing, classifying, filtering |
 | `report.py` | Outlook email builder |
-| `ui.py` | All UI classes |
+| `reports_pdf.py` | Pre/post patch PDF builder |
+| `ui.py` | Main window shell and sidebar |
+| `ui_customer.py` | Add/edit customer dialog |
+| `ui_patches.py` | Patch management tab |
+| `ui_servers.py` | Server status tab + PDF generation |
 | `requirements.txt` | Python dependencies |
 | `build.bat` | Windows build script → `PatchReporter.exe` |
 | `project.md` | This file |
@@ -145,3 +173,4 @@ Split single-file app into focused modules:
 ## Suggested Next Steps
 1. Add a visible indicator showing whether current or previous month data was used for the pull.
 2. Add logging/debug export panel for pull diagnostics.
+3. PyInstaller packaging (`build.bat` already configured — needs to be run on a Windows machine).

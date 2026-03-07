@@ -15,6 +15,7 @@ from constants import (
 from report import build_report_email, normalize_email_list
 from ui_customer import CustomerDialog
 from ui_patches import PatchPanel, style_treeview
+from ui_servers import ServerPanel
 
 
 class ApprovalReportApp:
@@ -156,9 +157,25 @@ class ApprovalReportApp:
         )
         self.policy_textbox.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 14))
 
-        # ── Patch panel (filter card + tabs) ──────────────────────────────
-        self.patch_panel = PatchPanel(main, app=self)
-        self.patch_panel.grid(row=2, column=0, sticky="nsew", padx=20, pady=(10, 0))
+        # ── Content tabs (Patch Management / Server Status) ───────────────
+        content_tabs = ctk.CTkTabview(main, fg_color=("gray93", "#191b2a"), corner_radius=8)
+        content_tabs.grid(row=2, column=0, sticky="nsew", padx=20, pady=(10, 0))
+        content_tabs.add("  Patch Management  ")
+        content_tabs.add("  Server Status  ")
+
+        patch_tab = content_tabs.tab("  Patch Management  ")
+        patch_tab.grid_columnconfigure(0, weight=1)
+        patch_tab.grid_rowconfigure(0, weight=1)
+
+        server_tab = content_tabs.tab("  Server Status  ")
+        server_tab.grid_columnconfigure(0, weight=1)
+        server_tab.grid_rowconfigure(0, weight=1)
+
+        self.patch_panel = PatchPanel(patch_tab, app=self)
+        self.patch_panel.grid(row=0, column=0, sticky="nsew")
+
+        self.server_panel = ServerPanel(server_tab, app=self)
+        self.server_panel.grid(row=0, column=0, sticky="nsew")
 
         # ── Footer ────────────────────────────────────────────────────────
         footer = ctk.CTkFrame(main, fg_color="transparent", height=54)
@@ -231,10 +248,19 @@ class ApprovalReportApp:
 
         self.policy_textbox.configure(state="normal")
         self.policy_textbox.delete("1.0", "end")
-        self.policy_textbox.insert("1.0", customer.get("policy_schedule", ""))
+        policies = customer.get("policies", [])
+        if policies:
+            policy_text = "\n".join(
+                p["name"] + (f"  —  {p['schedule']}" if p.get("schedule") else "")
+                for p in policies
+            )
+        else:
+            policy_text = ""
+        self.policy_textbox.insert("1.0", policy_text)
         self.policy_textbox.configure(state="disabled")
 
         self.patch_panel.display_customer(customer)
+        self.server_panel.display_customer(customer)
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
