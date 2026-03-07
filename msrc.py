@@ -1,4 +1,5 @@
 import re
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -27,6 +28,17 @@ PRODUCT_KEYWORDS: dict[str, list[str]] = {
     "Windows Server 2019": ["windows server 2019"],
     "Windows Server 2022": ["windows server 2022", "server operating system version 21h2"],
     "Windows Server 2025": ["windows server 2025", "server operating system version 24h2"],
+}
+
+# Catalog search terms for each product family.
+# Server 2022/2025 use their "Microsoft server operating system" naming in catalog titles.
+PRODUCT_CATALOG_TERMS: dict[str, str] = {
+    "Windows 10":          "windows 10",
+    "Windows 11":          "windows 11",
+    "Windows Server 2016": "windows server 2016",
+    "Windows Server 2019": "windows server 2019",
+    "Windows Server 2022": "server operating system 21H2",
+    "Windows Server 2025": "server operating system 24H2",
 }
 
 # Architecture keyword that must appear in the title when a specific arch is chosen.
@@ -82,35 +94,25 @@ def fetch_current_month_updates(filters: dict | None = None) -> dict:
         seen: set = set()
         yyyy_mm = f"{month_date.year}-{month_date.month:02d}"
 
-        kbs = fetch_msrc_month_kbs(month_date)
-        for kb in sorted(kbs):
-            catalog_rows = search_update_catalog(kb)
-            for row in catalog_rows:
-                add_row_if_relevant(
-                    collected, seen, row,
-                    fallback_kb=kb, month_date=month_date, filters=filters,
-                )
-
-        # Supplemental queries for SSU and .NET — product-aware when filters set
         selected_products = (filters or {}).get("products", [])
-        if selected_products:
-            catalog_queries = []
-            for product in selected_products:
-                if "server" in product.lower():
-                    catalog_queries.append(
-                        f"{yyyy_mm} servicing stack update {product.lower()}"
-                    )
-            catalog_queries.append(f"{yyyy_mm} cumulative update .net framework")
-            catalog_queries.append(f"{yyyy_mm} security and quality rollup .net framework")
-        else:
-            # Backward-compatible defaults (no product filter selected)
-            catalog_queries = [
-                f"{yyyy_mm} servicing stack update windows server 2016",
-                f"{yyyy_mm} cumulative update .net framework",
-                f"{yyyy_mm} security and quality rollup .net framework",
-            ]
 
-        for query in catalog_queries:
+        # Use the catalog search terms for selected products, or all products if none selected.
+        active_products = selected_products or list(PRODUCT_CATALOG_TERMS.keys())
+        cu_terms   = [PRODUCT_CATALOG_TERMS.get(p, p.lower()) for p in active_products]
+        ssu_terms  = [
+            PRODUCT_CATALOG_TERMS.get(p, p.lower())
+            for p in active_products if "server" in p.lower()
+        ]
+
+        queries: list[str] = []
+        for term in cu_terms:
+            queries.append(f"{yyyy_mm} cumulative update {term}")
+        for term in ssu_terms:
+            queries.append(f"{yyyy_mm} servicing stack update {term}")
+        queries.append(f"{yyyy_mm} cumulative update .net framework")
+        queries.append(f"{yyyy_mm} security and quality rollup .net framework")
+
+        for query in queries:
             rows = search_update_catalog(query)
             for row in rows:
                 add_row_if_relevant(
@@ -186,51 +188,67 @@ def previous_month(dt: datetime) -> datetime:
 
 def search_update_catalog(query: str) -> list:
     url = "https://www.catalog.update.microsoft.com/v7/site/Search.aspx"
-    response = requests.get(
-        url,
-        params={"q": query},
-        timeout=45,
-        headers={"User-Agent": "Mozilla/5.0"},
-    )
-    response.raise_for_status()
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    table = soup.find("table", id=re.compile(r"updateMatches|ctl00_catalogBody_updateMatches"))
-    if table is None:
-        table = soup.find("table")
-        if table is None:
+    for attempt in range(3):
+        try:
+            response = requests.get(
+                url,
+                params={"q": query},
+                timeout=45,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            response.raise_for_status()
+        except Exception:
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
             return []
 
-    rows = []
-    for tr in table.find_all("tr"):
-        cells = tr.find_all("td")
-        if len(cells) < 2:
-            continue
+        soup = BeautifulSoup(response.text, "html.parser")
+        table = soup.find("table", id=re.compile(r"updateMatches|ctl00_catalogBody_updateMatches"))
+        if table is None:
+            table = soup.find("table")
 
-        title = ""
-        for a in tr.find_all("a"):
-            text = clean_text(a.get_text(" ", strip=True))
-            if text and "KB" in text.upper():
-                title = text
-                break
-        if not title:
-            title = clean_text(cells[1].get_text(" ", strip=True))
+        if table is None:
+            # No results table — may be a transient error/captcha page; retry
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            return []
 
-        products       = clean_text(cells[2].get_text(" ", strip=True)) if len(cells) > 2 else ""
-        classification = clean_text(cells[3].get_text(" ", strip=True)) if len(cells) > 3 else ""
-        updated        = clean_text(cells[4].get_text(" ", strip=True)) if len(cells) > 4 else ""
+        # Table found — parse and return (empty list is a legitimate no-results)
+        rows = []
+        for tr in table.find_all("tr"):
+            cells = tr.find_all("td")
+            if len(cells) < 2:
+                continue
 
-        if not title:
-            continue
+            title = ""
+            for a in tr.find_all("a"):
+                text = clean_text(a.get_text(" ", strip=True))
+                if text and "KB" in text.upper():
+                    title = text
+                    break
+            if not title:
+                title = clean_text(cells[1].get_text(" ", strip=True))
 
-        rows.append({
-            "title": title,
-            "products": products,
-            "classification": classification,
-            "updated": updated,
-        })
+            products       = clean_text(cells[2].get_text(" ", strip=True)) if len(cells) > 2 else ""
+            classification = clean_text(cells[3].get_text(" ", strip=True)) if len(cells) > 3 else ""
+            updated        = clean_text(cells[4].get_text(" ", strip=True)) if len(cells) > 4 else ""
 
-    return rows
+            if not title:
+                continue
+
+            rows.append({
+                "title": title,
+                "products": products,
+                "classification": classification,
+                "updated": updated,
+            })
+
+        return rows
+
+    return []
 
 
 # ─── Row filtering / classification ──────────────────────────────────────────
