@@ -28,6 +28,9 @@ pyinstaller ^
     --add-data "msrc.py;." ^
     --add-data "report.py;." ^
     --add-data "ui.py;." ^
+    --add-data "ui_customer.py;." ^
+    --add-data "ui_patches.py;." ^
+    --add-data "ui_servers.py;." ^
     approvalreport.py
 
 if errorlevel 1 (
