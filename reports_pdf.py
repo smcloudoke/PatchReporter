@@ -20,8 +20,8 @@ _ROW_B      = "#ffffff"
 _GRID_COLOR = "#d0d4dc"
 
 _STATUS_ROW_BG = {
-    "Patch Successful": "#d4edda",
-    "Patch Failed":     "#f8d7da",
+    "Installed": "#d4edda",
+    "Failed":     "#f8d7da",
     "Reboot Required":  "#fff3cd",
     "Pending":          "#f5f5f5",
 }
@@ -65,7 +65,7 @@ def _alternating_rows(n_rows: int) -> list:
 # ── Public report builders ─────────────────────────────────────────────────────
 
 def build_pre_patch_pdf(filepath: str, customer: dict, month: str,
-                        updates: dict, servers: list):
+                        updates: dict, servers: list, policy: str = ""):
     """
     Pre-patch report: KBs to be applied + server inventory.
     `updates` is the standard {category: [{kb, title}]} dict.
@@ -82,16 +82,20 @@ def build_pre_patch_pdf(filepath: str, customer: dict, month: str,
         f"{customer.get('company_name', '')}  —  {month}",
         styles["Heading2"],
     ))
+    if policy and policy != "—":
+        elements.append(Paragraph(f"Policy: {policy}", styles["Normal"]))
     elements.append(Spacer(1, 0.2 * inch))
 
     # ── KBs to be applied ─────────────────────────────────────────────────────
     elements.append(Paragraph("Patches to be Applied", styles["Heading3"]))
     elements.append(Spacer(1, 0.05 * inch))
 
+    normal = getSampleStyleSheet()["Normal"]
+    normal.fontSize = 9
     kb_rows = [["Category", "KB", "Title"]]
     for category in ALL_CATEGORIES:
         for entry in updates.get(category, []):
-            kb_rows.append([category, entry.get("kb", ""), entry.get("title", "")])
+            kb_rows.append([category, entry.get("kb", ""), Paragraph(entry.get("title", ""), normal)])
 
     if len(kb_rows) > 1:
         kb_table = Table(kb_rows, colWidths=[1.4 * inch, 1.0 * inch, 4.6 * inch])
@@ -123,10 +127,10 @@ def build_pre_patch_pdf(filepath: str, customer: dict, month: str,
 
 
 def build_post_patch_pdf(filepath: str, customer: dict, month: str,
-                         server_statuses: list):
+                         server_statuses: list, policy: str = ""):
     """
     Post-patch report: summary counts + per-server status table.
-    `server_statuses` is a list of {hostname, os_version, status} dicts.
+    `server_statuses` is a list of {hostname, os_version, patch_kb, patch_name, status} dicts.
     """
     if not REPORTLAB_AVAILABLE:
         raise RuntimeError("reportlab is not installed. Run: pip install reportlab")
@@ -139,6 +143,8 @@ def build_post_patch_pdf(filepath: str, customer: dict, month: str,
         f"{customer.get('company_name', '')}  —  {month}",
         styles["Heading2"],
     ))
+    if policy and policy != "—":
+        elements.append(Paragraph(f"Policy: {policy}", styles["Normal"]))
     elements.append(Spacer(1, 0.2 * inch))
 
     # ── Summary ───────────────────────────────────────────────────────────────
@@ -147,8 +153,8 @@ def build_post_patch_pdf(filepath: str, customer: dict, month: str,
     total  = len(server_statuses)
     for line in [
         f"Total Servers: {total}",
-        f"Patch Successful: {counts.get('Patch Successful', 0)}",
-        f"Patch Failed: {counts.get('Patch Failed', 0)}",
+        f"Installed: {counts.get('Installed', 0)}",
+        f"Failed: {counts.get('Failed', 0)}",
         f"Reboot Required: {counts.get('Reboot Required', 0)}",
         f"Pending: {counts.get('Pending', 0)}",
     ]:
@@ -160,15 +166,19 @@ def build_post_patch_pdf(filepath: str, customer: dict, month: str,
     elements.append(Spacer(1, 0.05 * inch))
 
     if server_statuses:
-        srv_rows = [["Hostname", "OS Version", "Status"]]
+        normal = getSampleStyleSheet()["Normal"]
+        normal.fontSize = 9
+        srv_rows = [["Hostname", "OS Version", "KB", "Patch Name", "Status"]]
         for srv in server_statuses:
             srv_rows.append([
                 srv.get("hostname", ""),
                 srv.get("os_version", ""),
+                srv.get("patch_kb", ""),
+                Paragraph(srv.get("patch_name", ""), normal),
                 srv.get("status", ""),
             ])
 
-        srv_table = Table(srv_rows, colWidths=[2.5 * inch, 3.0 * inch, 1.5 * inch])
+        srv_table = Table(srv_rows, colWidths=[1.4 * inch, 1.5 * inch, 0.8 * inch, 2.3 * inch, 1.0 * inch])
         style_cmds = _table_base_style()
         for i, srv in enumerate(server_statuses, start=1):
             bg = _STATUS_ROW_BG.get(srv.get("status", ""), _ROW_B)

@@ -66,6 +66,8 @@ def init_db():
         for stmt in [
             "ALTER TABLE customers ADD COLUMN filters TEXT NOT NULL DEFAULT '{}'",
             "ALTER TABLE patch_sessions ADD COLUMN policy TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE server_patch_status ADD COLUMN patch_kb   TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE server_patch_status ADD COLUMN patch_name TEXT NOT NULL DEFAULT ''",
         ]:
             try:
                 conn.execute(stmt)
@@ -268,14 +270,40 @@ def get_or_create_session(customer_id: int, month: str) -> int:
     return session_id
 
 
-def get_session_statuses(session_id: int) -> dict[int, str]:
-    """Returns {server_id: status} for every server in the session."""
+def get_session_data(session_id: int) -> dict[int, dict]:
+    """
+    Returns {server_id: {"status": ..., "patch_kb": ..., "patch_name": ...}}
+    for every server in the session.
+    """
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT server_id, status FROM server_patch_status WHERE session_id = ?",
+            "SELECT server_id, status, patch_kb, patch_name "
+            "FROM server_patch_status WHERE session_id = ?",
             (session_id,),
         ).fetchall()
-    return {r["server_id"]: r["status"] for r in rows}
+    return {
+        r["server_id"]: {
+            "status":     r["status"],
+            "patch_kb":   r["patch_kb"],
+            "patch_name": r["patch_name"],
+        }
+        for r in rows
+    }
+
+
+def set_server_patches(session_id: int, server_ids: list[int],
+                       patch_kb: str, patch_name: str):
+    """Set patch_kb and patch_name for one or more servers in a session."""
+    with _connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO server_patch_status (session_id, server_id, status, patch_kb, patch_name)
+            VALUES (?, ?, 'Pending', ?, ?)
+            ON CONFLICT(session_id, server_id)
+            DO UPDATE SET patch_kb = excluded.patch_kb, patch_name = excluded.patch_name
+            """,
+            [(session_id, sid, patch_kb, patch_name) for sid in server_ids],
+        )
 
 
 def get_session_policy(session_id: int) -> str:
