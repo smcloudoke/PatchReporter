@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+from datetime import datetime
 
 from constants import ALL_CATEGORIES, CUSTOMERS_FILE, DB_FILE, DEFAULT_FILTERS
 
@@ -34,6 +35,30 @@ def init_db():
                 category    TEXT    NOT NULL,
                 kb          TEXT    NOT NULL,
                 title       TEXT    NOT NULL
+            );
+        """)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS servers (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+                hostname    TEXT    NOT NULL,
+                os_version  TEXT    NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS patch_sessions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+                month       TEXT    NOT NULL,
+                created_at  TEXT    NOT NULL DEFAULT '',
+                UNIQUE(customer_id, month)
+            );
+
+            CREATE TABLE IF NOT EXISTS server_patch_status (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL REFERENCES patch_sessions(id) ON DELETE CASCADE,
+                server_id  INTEGER NOT NULL REFERENCES servers(id)        ON DELETE CASCADE,
+                status     TEXT    NOT NULL DEFAULT 'Pending',
+                UNIQUE(session_id, server_id)
             );
         """)
         # Additive migration — safe for existing DBs that predate the filters column
@@ -154,6 +179,90 @@ def delete_customer(customer_id: int):
     """Delete a customer and all their KB entries (cascade)."""
     with _connect() as conn:
         conn.execute("DELETE FROM customers WHERE id=?", (customer_id,))
+
+
+# ─── Servers ──────────────────────────────────────────────────────────────────
+
+def get_servers(customer_id: int) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, hostname, os_version FROM servers "
+            "WHERE customer_id = ? ORDER BY os_version, hostname",
+            (customer_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def import_servers(customer_id: int, servers: list[dict]) -> int:
+    """Replace all servers for a customer. Returns count imported."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM servers WHERE customer_id = ?", (customer_id,))
+        conn.executemany(
+            "INSERT INTO servers (customer_id, hostname, os_version) VALUES (?, ?, ?)",
+            [(customer_id, s["hostname"], s["os_version"]) for s in servers],
+        )
+    return len(servers)
+
+
+def delete_servers(server_ids: list[int]):
+    with _connect() as conn:
+        conn.executemany("DELETE FROM servers WHERE id = ?", [(sid,) for sid in server_ids])
+
+
+# ─── Patch sessions ───────────────────────────────────────────────────────────
+
+def get_or_create_session(customer_id: int, month: str) -> int:
+    """
+    Return the session id for the given customer/month, creating it if needed.
+    Also ensures every current server has a status row (Pending if new).
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM patch_sessions WHERE customer_id = ? AND month = ?",
+            (customer_id, month),
+        ).fetchone()
+
+        if row:
+            session_id = row["id"]
+        else:
+            cur = conn.execute(
+                "INSERT INTO patch_sessions (customer_id, month, created_at) VALUES (?, ?, ?)",
+                (customer_id, month, datetime.now().isoformat()),
+            )
+            session_id = cur.lastrowid
+
+        # Ensure all current servers have a status entry (INSERT OR IGNORE handles existing)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO server_patch_status (session_id, server_id, status)
+            SELECT ?, id, 'Pending' FROM servers WHERE customer_id = ?
+            """,
+            (session_id, customer_id),
+        )
+    return session_id
+
+
+def get_session_statuses(session_id: int) -> dict[int, str]:
+    """Returns {server_id: status} for every server in the session."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT server_id, status FROM server_patch_status WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
+    return {r["server_id"]: r["status"] for r in rows}
+
+
+def set_server_statuses(session_id: int, server_ids: list[int], status: str):
+    """Upsert status for one or more servers in a session."""
+    with _connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO server_patch_status (session_id, server_id, status)
+            VALUES (?, ?, ?)
+            ON CONFLICT(session_id, server_id) DO UPDATE SET status = excluded.status
+            """,
+            [(session_id, sid, status) for sid in server_ids],
+        )
 
 
 # ─── Private helpers ──────────────────────────────────────────────────────────

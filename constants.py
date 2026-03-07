@@ -9,6 +9,27 @@ ALL_CATEGORIES      = [CATEGORY_CUMULATIVE, CATEGORY_SSU, CATEGORY_DOTNET]
 
 MSRC_CVRF_BASE = "https://api.msrc.microsoft.com/cvrf/v3.0"
 
+# ── Server patch statuses ──────────────────────────────────────────────────────
+PATCH_STATUSES = ["Pending", "Patch Successful", "Patch Failed", "Reboot Required"]
+STATUS_TAG = {
+    "Pending":          "status_pending",
+    "Patch Successful": "status_success",
+    "Patch Failed":     "status_failed",
+    "Reboot Required":  "status_reboot",
+}
+STATUS_ROW_FG = {
+    "Pending":          "#8b8fa8",
+    "Patch Successful": "#4ade80",
+    "Patch Failed":     "#f87171",
+    "Reboot Required":  "#fb923c",
+}
+STATUS_ROW_BG = {
+    "Pending":          "#22253a",
+    "Patch Successful": "#1a3a2a",
+    "Patch Failed":     "#3a1a1a",
+    "Reboot Required":  "#3a2a14",
+}
+
 # ── Patch filters ─────────────────────────────────────────────────────────────
 PRODUCT_FAMILIES = [
     "Windows 10",
