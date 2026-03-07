@@ -248,7 +248,15 @@ class ApprovalReportApp:
 
         self.policy_textbox.configure(state="normal")
         self.policy_textbox.delete("1.0", "end")
-        self.policy_textbox.insert("1.0", customer.get("policy_schedule", ""))
+        policies = customer.get("policies", [])
+        if policies:
+            policy_text = "\n".join(
+                p["name"] + (f"  —  {p['schedule']}" if p.get("schedule") else "")
+                for p in policies
+            )
+        else:
+            policy_text = ""
+        self.policy_textbox.insert("1.0", policy_text)
         self.policy_textbox.configure(state="disabled")
 
         self.patch_panel.display_customer(customer)

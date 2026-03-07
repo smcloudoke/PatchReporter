@@ -49,6 +49,7 @@ def init_db():
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
                 month       TEXT    NOT NULL,
+                policy      TEXT    NOT NULL DEFAULT '',
                 created_at  TEXT    NOT NULL DEFAULT '',
                 UNIQUE(customer_id, month)
             );
@@ -61,11 +62,15 @@ def init_db():
                 UNIQUE(session_id, server_id)
             );
         """)
-        # Additive migration — safe for existing DBs that predate the filters column
-        try:
-            conn.execute("ALTER TABLE customers ADD COLUMN filters TEXT NOT NULL DEFAULT '{}'")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        # Additive migrations — safe for existing DBs
+        for stmt in [
+            "ALTER TABLE customers ADD COLUMN filters TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE patch_sessions ADD COLUMN policy TEXT NOT NULL DEFAULT ''",
+        ]:
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
     _migrate_from_json()
 
 
@@ -102,10 +107,31 @@ def load_customers() -> list[dict]:
         result = []
         for row in rows:
             customer = dict(row)
-            customer["filters"] = _parse_filters(customer.get("filters", ""))
-            customer["updates"] = _load_kb_entries(row["id"], conn)
+            customer["filters"]  = _parse_filters(customer.get("filters", ""))
+            customer["policies"] = _parse_policies(customer.get("policy_schedule", ""))
+            customer["updates"]  = _load_kb_entries(row["id"], conn)
             result.append(customer)
         return result
+
+
+def _parse_policies(raw: str) -> list[dict]:
+    """
+    Deserialise the policy_schedule column into a list of {name, schedule} dicts.
+    Legacy plain-text values (one entry per line) are migrated automatically.
+    """
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return [
+                {"name": str(p.get("name", "")), "schedule": str(p.get("schedule", ""))}
+                for p in data if isinstance(p, dict) and p.get("name")
+            ]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # Legacy plain text — treat each non-empty line as a policy name
+    return [{"name": line.strip(), "schedule": ""} for line in raw.splitlines() if line.strip()]
 
 
 def _parse_filters(raw: str) -> dict:
@@ -144,7 +170,7 @@ def save_customer(customer: dict) -> int:
             (
                 customer.get("company_name", ""),
                 customer.get("emails", ""),
-                customer.get("policy_schedule", ""),
+                json.dumps(customer.get("policies", [])),
                 customer.get("last_updated", ""),
                 json.dumps(customer.get("filters", DEFAULT_FILTERS)),
             ),
@@ -165,7 +191,7 @@ def update_customer(customer: dict):
             (
                 customer.get("company_name", ""),
                 customer.get("emails", ""),
-                customer.get("policy_schedule", ""),
+                json.dumps(customer.get("policies", [])),
                 customer.get("last_updated", ""),
                 json.dumps(customer.get("filters", DEFAULT_FILTERS)),
                 cid,
@@ -250,6 +276,21 @@ def get_session_statuses(session_id: int) -> dict[int, str]:
             (session_id,),
         ).fetchall()
     return {r["server_id"]: r["status"] for r in rows}
+
+
+def get_session_policy(session_id: int) -> str:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT policy FROM patch_sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+    return row["policy"] if row else ""
+
+
+def set_session_policy(session_id: int, policy: str):
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE patch_sessions SET policy = ? WHERE id = ?", (policy, session_id)
+        )
 
 
 def set_server_statuses(session_id: int, server_ids: list[int], status: str):

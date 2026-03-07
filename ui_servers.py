@@ -32,11 +32,13 @@ class ServerPanel(ctk.CTkFrame):
         super().__init__(parent, corner_radius=0, fg_color="transparent")
         self.app = app
 
-        self._customer: dict | None = None
-        self._servers:  list[dict]  = []
-        self._session_id: int | None = None
-        self._statuses:  dict[int, str] = {}
+        self._customer:   dict | None   = None
+        self._servers:    list[dict]    = []
+        self._session_id: int | None    = None
+        self._statuses:   dict[int, str] = {}
         self._current_month = datetime.now().replace(day=1)
+        self._policy_var = tk.StringVar(value="")
+        self._loading_policy = False
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -75,6 +77,26 @@ class ServerPanel(ctk.CTkFrame):
             font=ctk.CTkFont(size=13),
             command=self._next_month,
         ).pack(side="left", padx=(6, 0))
+
+        # Policy selector
+        policy_row = ctk.CTkFrame(card, fg_color="transparent")
+        policy_row.grid(row=1, column=0, columnspan=2, sticky="w", padx=18, pady=(0, 12))
+
+        ctk.CTkLabel(
+            policy_row, text="Policy:",
+            font=ctk.CTkFont(size=12),
+        ).pack(side="left", padx=(0, 8))
+
+        self._policy_menu = ctk.CTkOptionMenu(
+            policy_row,
+            values=["—"],
+            variable=self._policy_var,
+            width=200,
+            height=30,
+            font=ctk.CTkFont(size=12),
+            command=self._on_policy_change,
+        )
+        self._policy_menu.pack(side="left")
 
         # Action buttons
         actions = ctk.CTkFrame(card, fg_color="transparent")
@@ -174,6 +196,7 @@ class ServerPanel(ctk.CTkFrame):
 
     def display_customer(self, customer: dict):
         self._customer = customer
+        self._current_month = datetime.now().replace(day=1)
         self._reload()
 
     def _reload(self):
@@ -184,12 +207,24 @@ class ServerPanel(ctk.CTkFrame):
         self._month_label.configure(text=self._month_str())
         self._servers = db.get_servers(customer_id)
 
+        # Rebuild policy dropdown from customer's current policies
+        self._loading_policy = True
+        policies = [p["name"] for p in self._customer.get("policies", []) if p.get("name")]
+        policy_values = policies if policies else ["—"]
+        self._policy_menu.configure(values=policy_values)
+
         if self._servers:
             self._session_id = db.get_or_create_session(customer_id, self._month_key())
             self._statuses   = db.get_session_statuses(self._session_id)
+            saved_policy = db.get_session_policy(self._session_id)
+            self._policy_var.set(
+                saved_policy if saved_policy in policy_values else policy_values[0]
+            )
         else:
             self._session_id = None
             self._statuses   = {}
+            self._policy_var.set(policy_values[0])
+        self._loading_policy = False
 
         self._populate_tree()
         self._update_summary()
@@ -222,6 +257,12 @@ class ServerPanel(ctk.CTkFrame):
                 f"⏳ {counts.get('Pending', 0)}"
             )
         )
+
+    def _on_policy_change(self, value: str):
+        if self._loading_policy or self._session_id is None:
+            return
+        if value != "—":
+            db.set_session_policy(self._session_id, value)
 
     # ── Month navigation ──────────────────────────────────────────────────────
 
