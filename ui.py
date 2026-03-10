@@ -192,13 +192,7 @@ class ApprovalReportApp:
             anchor="w",
         ).grid(row=0, column=0, sticky="w")
 
-        ctk.CTkButton(
-            footer,
-            text="  Draft Outlook Email  ",
-            height=40,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=self.draft_outlook_email,
-        ).grid(row=0, column=1, sticky="e")
+
 
     # ── Customer list ─────────────────────────────────────────────────────────
 

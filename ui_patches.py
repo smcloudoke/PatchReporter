@@ -79,6 +79,23 @@ class PatchPanel(ctk.CTkFrame):
 
         self._build_filter_card()
         self._build_tabs()
+        self._build_bottom_bar()
+
+    # ── Bottom bar ────────────────────────────────────────────────────────────
+
+    def _build_bottom_bar(self):
+        bar = ctk.CTkFrame(self, fg_color="transparent", height=54)
+        bar.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        bar.grid_columnconfigure(0, weight=1)
+        bar.grid_propagate(False)
+
+        ctk.CTkButton(
+            bar,
+            text="  Draft Outlook Email  ",
+            height=40,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=lambda: self.app.draft_outlook_email(),
+        ).grid(row=0, column=1, sticky="e")
 
     # ── Filter card ───────────────────────────────────────────────────────────
 
@@ -179,6 +196,16 @@ class PatchPanel(ctk.CTkFrame):
             hover_color=_BTN_MUTED_HOV,
             text_color=_BTN_MUTED_TXT,
             command=self.remove_selected_auto_kb,
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_row,
+            text="Known Patch Issues",
+            height=34,
+            fg_color=_BTN_MUTED,
+            hover_color=_BTN_MUTED_HOV,
+            text_color=_BTN_MUTED_TXT,
+            command=self._open_patch_issues,
         ).pack(side="left")
 
         tree_frame, self.auto_tree = self._build_kb_tree(tab)
@@ -314,6 +341,21 @@ class PatchPanel(ctk.CTkFrame):
                 )
                 row_num += 1
 
+    # ── Known patch issues ────────────────────────────────────────────────────
+
+    def _open_patch_issues(self):
+        if self.app.current_customer_idx is None:
+            messagebox.showinfo("No Customer", "Please select a customer first.")
+            return
+        customer = self.app.customers[self.app.current_customer_idx]
+
+        def on_save(notes: str):
+            customer["patch_notes"] = notes
+            db.update_customer(customer)
+            self.app.status_var.set("Patch issues saved.")
+
+        _KnownIssuesDialog(self, current_notes=customer.get("patch_notes", ""), on_save=on_save)
+
     # ── KB pull ───────────────────────────────────────────────────────────────
 
     def pull_current_month_kbs(self):
@@ -442,3 +484,49 @@ class PatchPanel(ctk.CTkFrame):
         self._populate_tree(self.manual_tree, self.current_updates)
         self._store_current_updates()
         self.app.status_var.set("Selected KB entries removed.")
+
+
+# ── Known patch issues dialog ──────────────────────────────────────────────────
+
+class _KnownIssuesDialog(ctk.CTkToplevel):
+    def __init__(self, parent, current_notes: str, on_save):
+        super().__init__(parent)
+        self.title("Known Patch Issues")
+        self.geometry("640x360")
+        self.resizable(True, True)
+        self.after(50, self.grab_set)
+        self.lift()
+        self._on_save = on_save
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            self,
+            text="Enter any known issues or notes for this month's patches.\nThis will appear in the Patch Issues section of the Outlook email draft.",
+            font=ctk.CTkFont(size=12),
+            justify="left",
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 8))
+
+        self._textbox = ctk.CTkTextbox(self, font=ctk.CTkFont(size=12), wrap="word")
+        self._textbox.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 12))
+        if current_notes:
+            self._textbox.insert("1.0", current_notes)
+
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 16))
+
+        ctk.CTkButton(
+            btn_frame, text="Cancel", width=90, height=36,
+            fg_color=_BTN_MUTED, hover_color=_BTN_MUTED_HOV, text_color=_BTN_MUTED_TXT,
+            command=self.destroy,
+        ).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(
+            btn_frame, text="Save", width=90, height=36,
+            command=self._save,
+        ).pack(side="right")
+
+    def _save(self):
+        self._on_save(self._textbox.get("1.0", "end").rstrip())
+        self.destroy()

@@ -30,7 +30,14 @@ def build_report_email(customer: dict, updates: dict) -> tuple[str, str]:
     if not sections:
         sections.append("<p><em>No KBs populated yet.</em></p>")
 
-    schedule = escape_html(customer.get("policy_schedule", "")).replace("\n", "<br>")
+    schedule     = escape_html(customer.get("policy_schedule", "")).replace("\n", "<br>")
+    patch_notes  = escape_html(customer.get("patch_notes", "")).replace("\n", "<br>")
+
+    known_issues_section = (
+        f"<p>{patch_notes}</p>"
+        if patch_notes
+        else "<p><em>No known issues for this month.</em></p>"
+    )
 
     html_body = f"""
 <html>
@@ -42,6 +49,9 @@ def build_report_email(customer: dict, updates: dict) -> tuple[str, str]:
     <p>Cumulative Updates are approved for all server and workstation versions.</p>
 
     {''.join(sections)}
+
+    <h2 style="color:#004080;">Known Patch Issues</h2>
+    {known_issues_section}
 
     <h2 style="color:#004080;">Current Month Schedule ({company})</h2>
     <p>{schedule or 'No schedule/policy entered.'}</p>
