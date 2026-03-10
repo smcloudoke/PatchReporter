@@ -1,10 +1,12 @@
 import customtkinter as ctk
 
+import crypto
 import db
 from ui import ApprovalReportApp
 
 
 def main():
+    crypto._init()
     db.init_db()
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")
