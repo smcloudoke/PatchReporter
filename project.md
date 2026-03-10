@@ -128,13 +128,34 @@ Split single-file app into focused modules:
 - Displayed in the main panel as "Policy Name  —  Schedule" per line.
 - Policy names populate the session policy dropdown in the Server Status tab.
 
+### 20. Known Patch Issues
+- "Known Patch Issues" button added to the Automated Pull tab button row.
+- Opens a modal textbox dialog pre-populated with any existing notes for that customer.
+- Notes saved to a `patch_notes` column on the `customers` table (additive migration).
+- Included in the Outlook email draft under a "Known Patch Issues" section between Approved Updates and the schedule.
+
+### 21. Draft Outlook Email button scoped to Patch Management tab
+- Moved from the global footer (visible on all tabs) into `PatchPanel` so it only appears in the Patch Management tab.
+- Server Status tab no longer shows the button.
+
+### 22. Database encryption (DPAPI + Fernet)
+- New `crypto.py` module handles key lifecycle and field-level encryption.
+- On first run: generates a random Fernet key, protects it with Windows DPAPI (`win32crypt.CryptProtectData`), saves the blob as `patchreport.key`.
+- On subsequent runs: loads and DPAPI-decrypts the key blob to reconstruct the Fernet instance.
+- Encrypted fields: `customers.company_name`, `customers.emails`, `customers.policy_schedule`, `customers.patch_notes`, `servers.hostname`.
+- `decrypt()` gracefully handles legacy plaintext (pre-encryption data) — `InvalidToken` is caught and the raw value is returned, so existing DBs continue to work and re-encrypt on next write.
+- On Linux (dev): `win32crypt` unavailable → `_fernet` stays `None` → `encrypt`/`decrypt` are no-ops, app runs normally with plaintext.
+- `patchreport.key` added to `.gitignore`; `cryptography` added to `requirements.txt`.
+
 ## Current App Behavior
 - Customer records persist in `patchreport.db` (SQLite, created alongside the `.exe` on first run).
+- Sensitive fields encrypted at rest (AES/Fernet); key protected by Windows DPAPI.
 - Per-customer product/architecture filters scope both the pull and the table display.
 - KBs can come from automated pull (MSRC CVRF API + catalog) or manual entry.
+- Known Patch Issues notes saved per customer and included in the Outlook email.
 - Server inventory imported via CSV; patch status tracked per server per month.
 - Pre/post patch PDF reports generated from the Server Status tab.
-- Report content is generated into an Outlook draft with full HTML formatting.
+- Outlook draft email accessible from the Patch Management tab only.
 - App ships as a single `PatchReporter.exe` — no Python install required on the target machine.
 
 ## File Overview
@@ -142,13 +163,14 @@ Split single-file app into focused modules:
 |---|---|
 | `approvalreport.py` | Entry point |
 | `constants.py` | Constants, color palette, status config |
+| `crypto.py` | Fernet encryption + DPAPI key management |
 | `db.py` | SQLite persistence (customers, KB entries, servers, sessions) |
 | `msrc.py` | KB fetching, parsing, classifying, filtering |
 | `report.py` | Outlook email builder |
 | `reports_pdf.py` | Pre/post patch PDF builder |
 | `ui.py` | Main window shell and sidebar |
 | `ui_customer.py` | Add/edit customer dialog |
-| `ui_patches.py` | Patch management tab |
+| `ui_patches.py` | Patch management tab + known issues dialog |
 | `ui_servers.py` | Server status tab + PDF generation |
 | `requirements.txt` | Python dependencies |
 | `build.bat` | Windows build script → `PatchReporter.exe` |
@@ -160,6 +182,7 @@ Split single-file app into focused modules:
 - UI: CustomTkinter (dark mode, blue theme) + `ttk.Treeview` (custom dark styling) + `tk.Menu` (right-click context)
 - Networking/parsing: `requests`, `beautifulsoup4`
 - Outlook integration: `pywin32` (`win32com.client`) — Windows only
+- Encryption: `cryptography` (Fernet/AES) + `pywin32` (`win32crypt` DPAPI) — Windows only; no-op on Linux
 - Data: SQLite via stdlib `sqlite3`
 - External data: MSRC CVRF API + Microsoft Update Catalog scraping
 - Distribution: PyInstaller `--onefile --windowed`
@@ -174,3 +197,4 @@ Split single-file app into focused modules:
 1. Add a visible indicator showing whether current or previous month data was used for the pull.
 2. Add logging/debug export panel for pull diagnostics.
 3. PyInstaller packaging (`build.bat` already configured — needs to be run on a Windows machine).
+4. Key backup/export utility — prompt user to back up `patchreport.key` on first run.

@@ -28,25 +28,27 @@ Output: `dist\PatchReport.exe`. The `build\` folder and `.spec` file can be disc
 
 | File | Responsibility |
 |---|---|
-| `approvalreport.py` | Entry point only — `main()`, DB init, CTk theme setup |
+| `approvalreport.py` | Entry point only — `main()`, crypto/DB init, CTk theme setup |
 | `constants.py` | All constants and UI color palette; no imports |
-| `db.py` | All SQLite operations — schema, CRUD, migrations |
+| `crypto.py` | Fernet field encryption with Windows DPAPI key protection |
+| `db.py` | All SQLite operations — schema, CRUD, migrations; encrypts/decrypts sensitive fields |
 | `msrc.py` | KB fetching, parsing, classifying (MSRC API + catalog scraping) |
 | `report.py` | Outlook email report building |
 | `reports_pdf.py` | Pre/post patch PDF report building (reportlab) |
 | `ui.py` | `ApprovalReportApp` — main window, sidebar, layout shell |
 | `ui_customer.py` | `CustomerDialog` — modal add/edit customer dialog |
-| `ui_patches.py` | `PatchPanel` — patch pull, KB treeview, product filters |
+| `ui_patches.py` | `PatchPanel` — patch pull, KB treeview, product filters, known issues |
 | `ui_servers.py` | `ServerPanel` — server inventory, patch sessions, PDF generation |
 
 Dependency flow (no circular imports):
-`approvalreport` → `ui` → `ui_patches` / `ui_servers` / `ui_customer` → `db` / `msrc` / `report` / `reports_pdf` → `constants`
+`approvalreport` → `crypto` / `db` / `ui` → `ui_patches` / `ui_servers` / `ui_customer` → `db` / `msrc` / `report` / `reports_pdf` → `constants`
+`db` → `crypto` → `constants`
 
 **`ui.py`** — `ApprovalReportApp` owns the top-level layout and wiring. Customer selection state is tracked via `current_customer_idx: int | None`. The sidebar is a `CTkScrollableFrame` with one `CTkButton` per customer; `refresh_customer_list()` destroys and recreates all buttons on any change. The main area uses a `CTkTabview` with "Patch Management" and "Server Status" tabs hosting `PatchPanel` and `ServerPanel` respectively.
 
 **`ui_customer.py`** — `CustomerDialog(ctk.CTkToplevel)` — modal add/edit dialog. Uses `after(50, self.grab_set)` to avoid a CTkToplevel timing bug. Patch policies are stored as a list of `{name, schedule}` dicts.
 
-**`ui_patches.py`** — `PatchPanel` — handles KB pull, treeview display, and per-customer product/arch filters. Filters are saved to the DB automatically on change and applied both to pull queries and treeview display.
+**`ui_patches.py`** — `PatchPanel` — handles KB pull, treeview display, per-customer product/arch filters, and the Known Patch Issues dialog. Filters are saved to the DB automatically on change and applied both to pull queries and treeview display. The Draft Outlook Email button lives here (Patch Management tab only).
 
 **`ui_servers.py`** — `ServerPanel` — CSV server import, monthly patch sessions, per-server KB auto-fill via `find_patch_for_server()`, bulk status apply, and pre/post PDF generation. `_PatchOverrideDialog` handles manual KB override for selected servers.
 
@@ -64,13 +66,23 @@ Dependency flow (no circular imports):
 
 `patchreport.db` (SQLite) created on first run via `db.init_db()`. Tables: `customers`, `kb_entries`, `servers`, `patch_sessions`, `server_patch_status`. Additive column migrations are wrapped in try/except so existing DBs upgrade silently. Each customer dict in memory carries an `"id"` field mapping to the DB primary key. `current_customer_idx` in `ApprovalReportApp` is a list index, not the DB id. If `customers.json` exists on first run it is automatically imported and renamed to `customers.json.migrated`.
 
+## Encryption
+
+`crypto.py` encrypts sensitive customer fields at rest using Fernet (AES-128-CBC + HMAC). The Fernet key is generated once, protected with Windows DPAPI (`win32crypt.CryptProtectData`), and stored as `patchreport.key` alongside the DB. DPAPI ties the key to the Windows user account — the `.key` file is useless without the same login.
+
+Encrypted fields: `customers.company_name`, `customers.emails`, `customers.policy_schedule`, `customers.patch_notes`, `servers.hostname`.
+
+On non-Windows (Linux dev), `win32crypt` is unavailable so `crypto._init()` exits early, `_fernet` stays `None`, and both `encrypt()`/`decrypt()` return the input unchanged — the app runs normally with plaintext. `patchreport.key` is excluded from git via `.gitignore`.
+
 ## Key constraints
 
 - **ttk.Treeview is intentionally kept** — CustomTkinter has no Treeview equivalent. It is styled via `ttk.Style("clam")` with the custom style name `"Patch.Treeview"`. Do not attempt to replace it with a CTk widget.
 - **tk.Menu is intentionally kept** — CTk has no menu widget. The right-click context menu on customer buttons uses standard `tk.Menu`.
 - **`customers.json`** is written to the current working directory at runtime. When running as a packaged `.exe`, this means the directory containing the executable.
 - **`win32com.client` is a lazy import** inside `draft_outlook_email()` — this is intentional so the app runs on non-Windows platforms for development. PyInstaller needs explicit `--hidden-import` flags for pywin32 as a result (already in `build.bat`).
+- **`win32crypt` and `cryptography` are optional** — `crypto._init()` silently skips encryption if either is unavailable (Linux dev). On Windows both are required for encryption to activate.
 - All business logic functions treat `requests` and `BeautifulSoup` as optional (guarded at import time) so the app loads even without them installed.
+- **`patchreport.key`** must be kept alongside `patchreport.db` — losing it means losing access to encrypted data. Back it up securely when deploying.
 
 ## Color palette
 
