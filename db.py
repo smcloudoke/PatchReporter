@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime
 
 from constants import ALL_CATEGORIES, CUSTOMERS_FILE, DB_FILE, DEFAULT_FILTERS
+from crypto import decrypt, encrypt
 
 
 # ─── Connection ───────────────────────────────────────────────────────────────
@@ -26,7 +27,8 @@ def init_db():
                 emails          TEXT    NOT NULL DEFAULT '',
                 policy_schedule TEXT    NOT NULL DEFAULT '',
                 last_updated    TEXT    NOT NULL DEFAULT '',
-                filters         TEXT    NOT NULL DEFAULT '{}'
+                filters         TEXT    NOT NULL DEFAULT '{}',
+                patch_notes     TEXT    NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS kb_entries (
@@ -65,6 +67,7 @@ def init_db():
         # Additive migrations — safe for existing DBs
         for stmt in [
             "ALTER TABLE customers ADD COLUMN filters TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE customers ADD COLUMN patch_notes TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE patch_sessions ADD COLUMN policy TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE server_patch_status ADD COLUMN patch_kb   TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE server_patch_status ADD COLUMN patch_name TEXT NOT NULL DEFAULT ''",
@@ -102,16 +105,19 @@ def _migrate_from_json():
 def load_customers() -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, company_name, emails, policy_schedule, last_updated, filters "
+            "SELECT id, company_name, emails, policy_schedule, last_updated, filters, patch_notes "
             "FROM customers ORDER BY id"
         ).fetchall()
 
         result = []
         for row in rows:
             customer = dict(row)
-            customer["filters"]  = _parse_filters(customer.get("filters", ""))
-            customer["policies"] = _parse_policies(customer.get("policy_schedule", ""))
-            customer["updates"]  = _load_kb_entries(row["id"], conn)
+            customer["company_name"]    = decrypt(customer.get("company_name", ""))
+            customer["emails"]          = decrypt(customer.get("emails", ""))
+            customer["patch_notes"]     = decrypt(customer.get("patch_notes", ""))
+            customer["filters"]         = _parse_filters(customer.get("filters", ""))
+            customer["policies"]        = _parse_policies(decrypt(customer.get("policy_schedule", "")))
+            customer["updates"]         = _load_kb_entries(row["id"], conn)
             result.append(customer)
         return result
 
@@ -167,14 +173,15 @@ def save_customer(customer: dict) -> int:
     """Insert a new customer. Returns the assigned database id."""
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO customers (company_name, emails, policy_schedule, last_updated, filters) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO customers (company_name, emails, policy_schedule, last_updated, filters, patch_notes) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
-                customer.get("company_name", ""),
-                customer.get("emails", ""),
-                json.dumps(customer.get("policies", [])),
+                encrypt(customer.get("company_name", "")),
+                encrypt(customer.get("emails", "")),
+                encrypt(json.dumps(customer.get("policies", []))),
                 customer.get("last_updated", ""),
                 json.dumps(customer.get("filters", DEFAULT_FILTERS)),
+                encrypt(customer.get("patch_notes", "")),
             ),
         )
         new_id = cur.lastrowid
@@ -188,14 +195,15 @@ def update_customer(customer: dict):
     with _connect() as conn:
         conn.execute(
             "UPDATE customers "
-            "SET company_name=?, emails=?, policy_schedule=?, last_updated=?, filters=? "
+            "SET company_name=?, emails=?, policy_schedule=?, last_updated=?, filters=?, patch_notes=? "
             "WHERE id=?",
             (
-                customer.get("company_name", ""),
-                customer.get("emails", ""),
-                json.dumps(customer.get("policies", [])),
+                encrypt(customer.get("company_name", "")),
+                encrypt(customer.get("emails", "")),
+                encrypt(json.dumps(customer.get("policies", []))),
                 customer.get("last_updated", ""),
                 json.dumps(customer.get("filters", DEFAULT_FILTERS)),
+                encrypt(customer.get("patch_notes", "")),
                 cid,
             ),
         )
@@ -218,7 +226,10 @@ def get_servers(customer_id: int) -> list[dict]:
             "WHERE customer_id = ? ORDER BY os_version, hostname",
             (customer_id,),
         ).fetchall()
-    return [dict(r) for r in rows]
+    return [
+        {"id": r["id"], "hostname": decrypt(r["hostname"]), "os_version": r["os_version"]}
+        for r in rows
+    ]
 
 
 def import_servers(customer_id: int, servers: list[dict]) -> int:
@@ -227,7 +238,7 @@ def import_servers(customer_id: int, servers: list[dict]) -> int:
         conn.execute("DELETE FROM servers WHERE customer_id = ?", (customer_id,))
         conn.executemany(
             "INSERT INTO servers (customer_id, hostname, os_version) VALUES (?, ?, ?)",
-            [(customer_id, s["hostname"], s["os_version"]) for s in servers],
+            [(customer_id, encrypt(s["hostname"]), s["os_version"]) for s in servers],
         )
     return len(servers)
 

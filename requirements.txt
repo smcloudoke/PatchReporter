@@ -3,4 +3,5 @@ requests
 beautifulsoup4
 pywin32
 reportlab
+cryptography
 pyinstaller

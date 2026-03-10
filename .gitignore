@@ -1,7 +1,8 @@
-# Database
+# Database and encryption key
 *.db
 *.db-shm
 *.db-wal
+*.key
 
 # Legacy data migration remnant
 customers.json
